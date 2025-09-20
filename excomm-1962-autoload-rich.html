@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ExComm Autoload (minimal)</title>
+<div id="app" style="font:16px/1.4 system-ui, sans-serif; padding:20px">Loading…</div>
+<script>
+fetch("https://therealjameswilson.github.io/excomm-1962.html/October-1962.xq.xml", { cache: "reload" })
+  .then(r => {
+    if (!r.ok) throw new Error(r.status);
+    return r.text();
+  })
+  .then(txt => document.getElementById('app').textContent = 'Loaded XML (' + txt.length + ' chars).'))
+  .catch(e => document.getElementById('app').textContent = 'Failed to load XML: ' + e);
+</script>
