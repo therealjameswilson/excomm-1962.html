@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ExComm: October 1962 — Daily NSC Brief (Full Text)</title>
+<link rel="preconnect" href="https://unpkg.com" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html,body,#root{height:100%}
+  body{background:linear-gradient(#f8fafc,#eef2f7)}
+  .card{border-radius:1rem;border:1px solid rgba(0,0,0,.08);background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+  .pill{display:inline-flex;align-items:center;border:1px solid rgba(0,0,0,.12);border-radius:9999px;padding:2px 10px;font-size:12px}
+  .muted{color:#667085}
+  .doc{border:1px solid #e5e7eb;border-radius:14px;padding:12px}
+  .doc pre{white-space:pre-wrap;font:13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
+  .doc .full{margin-top:8px}
+  details>summary{cursor:pointer}
+</style>
+</head>
+<body>
+<div id="root" class="p-4 md:p-8"></div>
+
+<script type="text/babel">
+// === Utilities ===
+const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
+const fmtISO=(d)=>new Date(d).toISOString().slice(0,10);
+function rangeDays(startISO, endISO) {
+  const out=[]; let d=new Date(startISO+"T00:00:00Z"); const end=new Date(endISO+"T00:00:00Z");
+  while (d <= end) { out.push(fmtISO(d)); d.setUTCDate(d.getUTCDate()+1); }
+  return out;
+}
+function wordCount(text){ return (text.trim().match(/\\b\\w+\\b/g)||[]).length; }
+
+// === Parse TEI and keep **full text** ===
+function computeKeywords(text){
+  const K=["Cuba","Cuban","missile","SAM","SA-2","Khrushchev","Dobrynin","U-2","quarantine","blockade","OAS","Turkey","Jupiter","Berlin","Castro","air strike","invasion","UN","no invasion","nuclear","Soviet","USSR","ExComm","Rusk","McNamara","Bundy","Gromyko","Stevenson"];
+  const t=(text||"").toLowerCase(); const s=new Set(); K.forEach(k=>{ if(t.includes(k.toLowerCase())) s.add(k); }); return [...s];
+}
+function blockTexts(node){
+  // Grab paragraphs and common block elements; join with blank lines for readability
+  const blocks = Array.from(node.querySelectorAll("p, ab, opener, closer, signed, dateline, note, list, item, figure, quote, q, head, byline, postscript"));
+  const out = [];
+  blocks.forEach(el => {
+    const txt = (el.textContent||"").trim();
+    if (txt) out.push(txt);
+  });
+  // If nothing matched, fall back to the node's full text
+  if (out.length===0) {
+    const flat = (node.textContent||"").trim();
+    if (flat) out.push(flat);
+  }
+  return out.join("\\n\\n");
+}
+function parseTEIXML(xmlText){
+  const xml=new DOMParser().parseFromString(xmlText,"text/xml");
+  const divs=[...xml.querySelectorAll("div[type='document']")];
+  return divs.map((div,i)=>{
+    const id=div.getAttribute("xml:id")||"doc_"+i;
+    const head=(div.querySelector("head")?.textContent||"Untitled FRUS Document").trim().replace(/\\s+/g," ");
+    let dateISO,dateText;
+    const dateEl=div.querySelector("opener dateline date");
+    if(dateEl){ dateText=(dateEl.textContent||"").trim(); const when=dateEl.getAttribute("when")||dateEl.getAttribute("notBefore")||dateEl.getAttribute("notAfter"); if(when) dateISO=when.slice(0,10); }
+    if(!dateISO){ const min=div.getAttribute("frus:doc-dateTime-min"); if(min) dateISO=min.slice(0,10); }
+    const place=div.querySelector("opener dateline placeName")?.textContent?.trim();
+    const summary=(div.querySelector("p")?.textContent||"").trim().replace(/\\s+/g," ");
+    const full = blockTexts(div); // <-- full text capture
+    const keywords=computeKeywords(full);
+    return { id, head, dateISO, dateText, place, summary, keywords, full };
+  });
+}
+
+// === Recommendation model (unchanged) ===
+const REC_EXPECTATIONS=[
+  { from:"1962-10-02", to:"1962-10-15", expect:["expand_recon","maintain_secrecy","plan_options","backchannel_prep"] },
+  { from:"1962-10-16", to:"1962-10-21", expect:["expand_recon","maintain_secrecy","quarantine_option","un_prep","oas_consult"] },
+  { from:"1962-10-22", to:"1962-10-25", expect:["quarantine_execute","un_prep","backchannel"] },
+  { from:"1962-10-26", to:"1962-10-27", expect:["backchannel","reply_first_letter","avoid_airstrike","sustain_quarantine"] },
+  { from:"1962-10-28", to:"1962-10-31", expect:["accept_settlement","verify_un","no_invasion_signal"] },
+];
+const ALL_RECS=[
+  {id:"expand_recon",label:"Expand reconnaissance"},
+  {id:"maintain_secrecy",label:"Maintain strict secrecy"},
+  {id:"plan_options",label:"Quietly plan air strike / invasion options"},
+  {id:"backchannel_prep",label:"Open/prepare backchannel to Moscow"},
+  {id:"quarantine_option",label:"Develop naval quarantine option"},
+  {id:"un_prep",label:"Prepare UN strategy / Stevenson brief"},
+  {id:"oas_consult",label:"Consult OAS for hemispheric backing"},
+  {id:"quarantine_execute",label:"Execute naval quarantine"},
+  {id:"backchannel",label:"Use backchannel actively (RFK–Dobrynin)"},
+  {id:"reply_first_letter",label:"Reply to first (conciliatory) Khrushchev letter"},
+  {id:"avoid_airstrike",label:"Avoid immediate air strike"},
+  {id:"sustain_quarantine",label:"Sustain quarantine; measured enforcement"},
+  {id:"accept_settlement",label:"Accept core settlement (no invasion ↔ removal)"},
+  {id:"verify_un",label:"Pursue UN verification"},
+  {id:"no_invasion_signal",label:"Signal no-invasion assurance (quietly)"},
+];
+function expectedFor(dateISO){
+  const t=new Date(dateISO+"T00:00:00Z").getTime();
+  for(const row of REC_EXPECTATIONS){
+    const a=new Date(row.from+"T00:00:00Z").getTime(), b=new Date(row.to+"T00:00:00Z").getTime();
+    if(t>=a&&t<=b) return row.expect;
+  }
+  return ["expand_recon","maintain_secrecy"];
+}
+
+// === Grading ===
+function coverageScore(report, docs){
+  const keys=new Set(); docs.forEach(d=>(d.keywords||[]).forEach(k=>keys.add(k.toLowerCase())));
+  const words=new Set((report||"").toLowerCase().match(/[a-z0-9-]+/g)||[]);
+  let hits=0; keys.forEach(k=>{ if(words.has(k)) hits++; });
+  const denom=Math.max(5,keys.size||0);
+  return Math.round(100*hits/denom);
+}
+function recScore(chosen, dateISO){
+  const want=new Set(expectedFor(dateISO)); const got=new Set(chosen||[]);
+  let ok=0, extra=0; got.forEach(r=>{ if(want.has(r)) ok++; else extra++; });
+  const base=Math.round(100*ok/Math.max(1,want.size));
+  return clamp(base - Math.min(20, extra*5), 0, 100);
+}
+function combinedGrade(cov, rec, lenOK){
+  const weighted=Math.round(0.55*cov + 0.45*rec);
+  const penalty=lenOK?0:10;
+  const score=clamp(weighted - penalty, 0, 100);
+  let letter="C";
+  if(score>=93)letter="A";
+  else if(score>=85)letter="A-";
+  else if(score>=80)letter="B+";
+  else if(score>=75)letter="B";
+  else if(score>=70)letter="B-";
+  else if(score>=65)letter="C+";
+  else if(score>=60)letter="C";
+  else if(score>=50)letter="D";
+  else letter="F";
+  return {score,letter};
+}
+
+// === UI ===
+const Card=({children,className=""})=> <div className={"card p-4 md:p-6 "+className}>{children}</div>;
+const CheckRow=({id,label,checked,onChange})=>(
+  <label className={"flex items-center gap-2 py-1 px-2 rounded-xl border "+(checked?"bg-slate-50":"bg-white")}>
+    <input type="checkbox" checked={checked} onChange={onChange} />
+    <span>{label}</span>
+  </label>
+);
+
+// === Panels ===
+function DayPanel({day, prevDocs, onSubmit}){
+  const [report,setReport]=React.useState("");
+  const [sel,setSel]=React.useState(new Set());
+  const wc=wordCount(report), lenOK=wc<=200;
+  const prevISO=fmtISO(new Date(new Date(day+"T00:00:00Z").getTime()-86400000));
+
+  function toggle(id){ setSel(s=>{ const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; }); }
+  const recs=ALL_RECS.map(r=>({...r, checked:sel.has(r.id)}));
+
+  return (<>
+    <Card>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="text-xl font-bold">Morning Brief — {day} <span className="muted">(6:30 → 7:00am)</span></h2>
+        <div className="pill">Report ≤ 200 words</div>
+      </div>
+      <p className="text-slate-700 mt-1">You receive <strong>all FRUS documents from {prevISO}</strong>. Read everything, then submit a concise report with your recommendations for today.</p>
+    </Card>
+
+    <Card>
+      <h3 className="text-lg font-semibold">Documents from {prevISO}</h3>
+      {prevDocs.length===0 ? <p className="muted mt-2">No documents for the previous day (or dates missing in source).</p> :
+        <div className="space-y-3 mt-2">
+          {prevDocs.map(d=> (
+            <div key={d.id} className="doc">
+              <div className="text-xs muted">{d.dateISO||d.dateText||"(undated)"}{d.place?` — ${d.place}`:""}</div>
+              <div className="font-semibold">{d.head}</div>
+              <details className="full">
+                <summary className="cursor-pointer text-sm underline">Show full text</summary>
+                <pre>{d.full}</pre>
+              </details>
+              {d.keywords?.length ? <div className="text-xs muted mt-1">Keywords: {d.keywords.join(", ")}</div> : null}
+            </div>
+          ))}
+        </div>}
+    </Card>
+
+    <Card>
+      <h3 className="text-lg font-semibold">Your Report (due 7:00am)</h3>
+      <textarea className="w-full rounded-2xl border px-3 py-2" rows="8"
+        placeholder="Summarize yesterday’s intelligence & advise the NSC on today’s actions… (≤200 words)"
+        value={report} onChange={e=>setReport(e.target.value)} />
+      <div className={"mt-2 text-sm "+(lenOK?"muted":"text-red-600")}>{wc} / 200 words</div>
+
+      <div className="mt-4">
+        <div className="font-medium">Your Recommendations</div>
+        <div className="grid md:grid-cols-2 gap-2 mt-2">
+          {recs.map(r=> <CheckRow key={r.id} id={r.id} label={r.label} checked={r.checked} onChange={()=>toggle(r.id)} />)}
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <button className={"rounded-2xl px-4 py-2 font-semibold text-white "+(lenOK?"bg-black hover:opacity-90":"bg-gray-400 cursor-not-allowed")}
+          disabled={!lenOK} onClick={()=>onSubmit({report,recs:[...sel]})}>Submit to Bundy</button>
+      </div>
+    </Card>
+  </>);
+}
+
+function BundyReview({day, submission, prevDocs, onNext}){
+  const cov=coverageScore(submission.report, prevDocs);
+  const rs=recScore(submission.recs, day);
+  const g=combinedGrade(cov, rs, wordCount(submission.report)<=200);
+  const prevISO=fmtISO(new Date(new Date(day+"T00:00:00Z").getTime()-86400000));
+
+  return (
+    <Card>
+      <h3 className="text-lg font-semibold">McGeorge Bundy — Assessment for {day}</h3>
+      <p className="mt-2"><strong>Coverage:</strong> {cov}/100 <span className="muted">— did you reflect the salient evidence from {prevISO}?</span></p>
+      <p><strong>Recommendation fit:</strong> {rs}/100 <span className="muted">— how well your guidance matches the optimal posture for this period.</span></p>
+      <p className="mt-2"><strong>Combined grade:</strong> {g.letter} ({g.score}/100)</p>
+      <div className="mt-3 text-slate-800">
+        <p><strong>Bundy:</strong> Keep it crisp. Anchor judgments in evidence; keep the UN track and alliance equities in view. Manage risk while preserving maneuver space.</p>
+      </div>
+      <div className="mt-4 flex gap-2">
+        <button className="rounded-2xl px-4 py-2 font-semibold bg-black text-white" onClick={onNext}>Proceed to next day</button>
+      </div>
+    </Card>
+  );
+}
+
+// === App ===
+function App(){
+  const [docs,setDocs]=React.useState([]);
+  const [ready,setReady]=React.useState(false);
+  const days=rangeDays("1962-10-02","1962-10-31");
+  const [i,setI]=React.useState(0);
+  const [phase,setPhase]=React.useState("play"); // play | review | end
+  const [sub,setSub]=React.useState(null);
+  const [grades,setGrades]=React.useState([]);
+
+  React.useEffect(()=>{
+    (async()=>{
+      try{
+        const res=await fetch("https://therealjameswilson.github.io/excomm-1962.html/October-1962.xq.xml",{cache:"reload"});
+        if(!res.ok) throw new Error("HTTP "+res.status);
+        const txt=await res.text();
+        setDocs(parseTEIXML(txt));
+        setReady(true);
+      }catch(e){ console.warn("XML load failed", e); }
+    })();
+  },[]);
+
+  const day=days[i];
+  const prevISO=fmtISO(new Date(new Date(day+"T00:00:00Z").getTime()-86400000));
+  const prevDocs=React.useMemo(()=> (docs||[]).filter(d=>d.dateISO===prevISO), [docs, prevISO]);
+
+  function submit(payload){
+    setSub(payload);
+    setPhase("review");
+  }
+  function nextDay(){
+    // record grade summary
+    const cov=coverageScore(sub?.report||"", prevDocs);
+    const rs=recScore(sub?.recs||[], day);
+    const g=combinedGrade(cov, rs, wordCount(sub?.report||"")<=200);
+    setGrades(arr=>arr.concat([{day, score:g.score, letter:g.letter}]));
+
+    if(i<days.length-1){ setI(i+1); setPhase("play"); setSub(null); }
+    else { setPhase("end"); }
+  }
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-6">
+      <header className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">ExComm: Daily NSC Brief — October 1962</h1>
+        <div className="pill">Role: NSC Staff (reports 6:30–7:00am)</div>
+      </header>
+
+      {!ready && <Card><div>Loading FRUS documents…</div></Card>}
+
+      {ready && phase==="play" && (
+        <DayPanel day={day} prevDocs={prevDocs} onSubmit={submit} />
+      )}
+
+      {ready && phase==="review" && sub && (
+        <BundyReview day={day} submission={sub} prevDocs={prevDocs} onNext={nextDay} />
+      )}
+
+      {ready && phase==="end" && (
+        <Card>
+          <h2 className="text-xl font-bold">Epilogue — October complete</h2>
+          <p className="muted">Bundy’s summary of your performance across the month.</p>
+          <div className="mt-3 space-y-1">
+            {grades.map((g,idx)=>(
+              <div key={idx} className="flex items-center justify-between border-b py-1">
+                <div>{g.day}</div>
+                <div className="font-semibold">{g.letter} ({g.score}/100)</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4"><button className="rounded-2xl px-4 py-2 font-semibold bg-black text-white" onClick={()=>location.reload()}>Restart</button></div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+const root=ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App/>);
+</script>
+</body>
+</html>
