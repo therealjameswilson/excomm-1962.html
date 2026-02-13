@@ -120,6 +120,21 @@ function combinedGrade(cov, rec, lenOK){
   return {score,letter};
 }
 
+function recommendationLabel(id){
+  return ALL_RECS.find(r=>r.id===id)?.label || id;
+}
+
+function buildCoachFeedback(day, submission, prevDocs){
+  const expected=expectedFor(day);
+  const chosen=submission?.recs||[];
+  const missed=expected.filter(id=>!chosen.includes(id));
+  const unnecessary=chosen.filter(id=>!expected.includes(id));
+  const keywordPool=new Set((prevDocs||[]).flatMap(d=>d.keywords||[]));
+  const report=(submission?.report||"").toLowerCase();
+  const mentioned=[...keywordPool].filter(k=>report.includes(k.toLowerCase()));
+  return { mentioned, missed, unnecessary };
+}
+
 // === UI atoms ===
 const Card=({children,className=""})=> <div className={"card p-4 md:p-6 "+className}>{children}</div>;
 const CheckRow=({id,label,checked,onChange})=>(
@@ -190,6 +205,7 @@ function BundyReview({day, submission, prevDocs, onNext}){
   const rs=recScore(submission.recs, day);
   const g=combinedGrade(cov, rs, wordCount(submission.report)<=200);
   const prevISO=fmtISO(new Date(new Date(day+"T00:00:00Z").getTime()-86400000));
+  const feedback=buildCoachFeedback(day, submission, prevDocs);
 
   return (
     <Card>
@@ -199,6 +215,12 @@ function BundyReview({day, submission, prevDocs, onNext}){
       <p className="mt-2"><strong>Combined grade:</strong> {g.letter} ({g.score}/100)</p>
       <div className="mt-3 text-slate-800">
         <p><strong>Bundy:</strong> Keep it crisp. Anchor judgments in evidence; keep the UN track and alliance equities in view. Manage risk while preserving maneuver space.</p>
+      </div>
+      <div className="mt-3 rounded-xl border bg-slate-50 p-3 text-sm space-y-2">
+        <div><strong>Coach notes:</strong></div>
+        <div>Evidence captured: {feedback.mentioned.length ? feedback.mentioned.slice(0,6).join(", ") : "Sparse. Name concrete actors, systems, and channels from the previous day."}</div>
+        <div>Missed high-priority recommendations: {feedback.missed.length ? feedback.missed.map(recommendationLabel).join("; ") : "None"}</div>
+        <div>Potentially distracting recommendations: {feedback.unnecessary.length ? feedback.unnecessary.map(recommendationLabel).join("; ") : "None"}</div>
       </div>
       <div className="mt-4 flex gap-2">
         <button className="rounded-2xl px-4 py-2 font-semibold bg-black text-white" onClick={onNext}>Proceed to next day</button>
@@ -218,6 +240,22 @@ function App(){
   const [grades,setGrades]=React.useState([]);
 
   React.useEffect(()=>{
+    try{
+      const saved=JSON.parse(localStorage.getItem("excomm-save-v2")||"null");
+      if(saved && typeof saved.i==="number" && Array.isArray(saved.grades) && ["play","review","end"].includes(saved.phase)){
+        setI(clamp(saved.i, 0, days.length-1));
+        setGrades(saved.grades);
+        setPhase(saved.phase);
+        setSub(saved.sub || null);
+      }
+    }catch(e){ console.warn("save load failed", e); }
+  },[]);
+
+  React.useEffect(()=>{
+    localStorage.setItem("excomm-save-v2", JSON.stringify({i, phase, sub, grades}));
+  },[i,phase,sub,grades]);
+
+  React.useEffect(()=>{
     (async()=>{
       try{
         const res=await fetch("https://therealjameswilson.github.io/excomm-1962.html/October-1962.xq.xml",{cache:"reload"});
@@ -232,6 +270,7 @@ function App(){
   const day=days[i];
   const prevISO=fmtISO(new Date(new Date(day+"T00:00:00Z").getTime()-86400000));
   const prevDocs=React.useMemo(()=> (docs||[]).filter(d=>d.dateISO===prevISO), [docs, prevISO]);
+  const avgScore=grades.length ? Math.round(grades.reduce((sum,row)=>sum+row.score,0)/grades.length) : null;
 
   function submit(payload){
     setSub(payload);
@@ -254,6 +293,19 @@ function App(){
         <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">ExComm: Daily NSC Brief — October 1962</h1>
         <div className="pill">Role: NSC Staff (reports 6:30–7:00am)</div>
       </header>
+
+      <Card>
+        <div className="grid md:grid-cols-4 gap-3 text-sm">
+          <div><div className="muted">Day</div><div className="font-semibold">{Math.min(i+1, days.length)} / {days.length}</div></div>
+          <div><div className="muted">Date</div><div className="font-semibold">{day}</div></div>
+          <div><div className="muted">Completed briefs</div><div className="font-semibold">{grades.length}</div></div>
+          <div><div className="muted">Average score</div><div className="font-semibold">{avgScore===null?"—":`${avgScore}/100`}</div></div>
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
+          <div className="pill">Yesterday's documents: {prevDocs.length}</div>
+          <button className="text-xs rounded-xl border px-2 py-1 hover:bg-slate-50" onClick={()=>{ localStorage.removeItem("excomm-save-v2"); location.reload(); }}>Reset campaign progress</button>
+        </div>
+      </Card>
 
       {!ready && <Card><div>Loading FRUS documents…</div></Card>}
 
