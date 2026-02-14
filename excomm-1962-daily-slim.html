@@ -80,6 +80,38 @@ const ALL_RECS=[
   {id:"verify_un",label:"Pursue UN verification"},
   {id:"no_invasion_signal",label:"Signal no-invasion assurance (quietly)"},
 ];
+const REC_IMPACT={
+  expand_recon:-2,
+  maintain_secrecy:-1,
+  plan_options:6,
+  backchannel_prep:-4,
+  quarantine_option:1,
+  un_prep:-3,
+  oas_consult:-2,
+  quarantine_execute:2,
+  backchannel:-6,
+  reply_first_letter:-5,
+  avoid_airstrike:-8,
+  sustain_quarantine:-2,
+  accept_settlement:-8,
+  verify_un:-4,
+  no_invasion_signal:-5,
+};
+const RISK_KEYWORDS={
+  "nuclear":8,
+  "u-2":7,
+  "sam":4,
+  "sa-2":4,
+  "berlin":4,
+  "turkey":3,
+  "jupiter":3,
+  "air strike":6,
+  "invasion":7,
+  "quarantine":2,
+  "blockade":2,
+  "castro":2,
+  "khrushchev":2,
+};
 const KEY_PEOPLE=[
   { name:"McGeorge Bundy", role:"National Security Advisor", img:"https://upload.wikimedia.org/wikipedia/commons/9/9d/McGeorge_Bundy%2C_bw_photo_portrait.jpg" },
   { name:"John F. Kennedy", role:"President of the United States", img:"https://upload.wikimedia.org/wikipedia/commons/7/7d/John_F._Kennedy%2C_White_House_color_photo_portrait.jpg" },
@@ -95,6 +127,33 @@ function expectedFor(dateISO){
   }
   return ["expand_recon","maintain_secrecy"];
 }
+function periodRiskBias(dateISO){
+  const t=new Date(dateISO+"T00:00:00Z").getTime();
+  const inRange=(a,b)=>{ const x=new Date(a+"T00:00:00Z").getTime(), y=new Date(b+"T00:00:00Z").getTime(); return t>=x&&t<=y; };
+  if(inRange("1962-10-02","1962-10-15")) return {prefer:["expand_recon","maintain_secrecy","backchannel_prep"], avoid:["plan_options"]};
+  if(inRange("1962-10-16","1962-10-21")) return {prefer:["expand_recon","quarantine_option","un_prep","oas_consult"], avoid:["plan_options"]};
+  if(inRange("1962-10-22","1962-10-25")) return {prefer:["quarantine_execute","backchannel","un_prep"], avoid:["plan_options"]};
+  if(inRange("1962-10-26","1962-10-27")) return {prefer:["backchannel","reply_first_letter","avoid_airstrike"], avoid:["plan_options"]};
+  return {prefer:["accept_settlement","verify_un","no_invasion_signal"], avoid:["plan_options"]};
+}
+function docPressureScore(docs){
+  const blob=(docs||[]).map(d=>[d.head,d.summary,(d.keywords||[]).join(" ")].join(" ")).join(" ").toLowerCase();
+  let risk=0;
+  Object.entries(RISK_KEYWORDS).forEach(([k,v])=>{ if(blob.includes(k)) risk+=v; });
+  return clamp(risk,0,20);
+}
+function decisionRiskDelta(chosen, dateISO){
+  const got=new Set(chosen||[]);
+  const profile=periodRiskBias(dateISO);
+  let delta=0;
+  got.forEach(id=>{ delta += REC_IMPACT[id]||0; });
+  profile.prefer.forEach(id=>{ if(got.has(id)) delta-=1; });
+  profile.avoid.forEach(id=>{ if(got.has(id)) delta+=6; });
+  if(got.has("plan_options") && !got.has("backchannel")) delta+=4;
+  if(got.has("quarantine_execute") && got.has("un_prep")) delta-=2;
+  if(got.has("accept_settlement") && got.has("verify_un")) delta-=2;
+  return clamp(Math.round(delta),-15,20);
+}
 
 // === Grading ===
 function coverageScore(report, docs){
@@ -106,9 +165,15 @@ function coverageScore(report, docs){
 }
 function recScore(chosen, dateISO){
   const want=new Set(expectedFor(dateISO)); const got=new Set(chosen||[]);
-  let ok=0, extra=0; got.forEach(r=>{ if(want.has(r)) ok++; else extra++; });
+  const profile=periodRiskBias(dateISO);
+  let ok=0, extra=0, dangerous=0;
+  got.forEach(r=>{
+    if(want.has(r)) ok++;
+    else extra++;
+    if(profile.avoid.includes(r)) dangerous++;
+  });
   const base=Math.round(100*ok/Math.max(1,want.size));
-  return clamp(base - Math.min(20, extra*5), 0, 100);
+  return clamp(base - Math.min(20, extra*4) - dangerous*12, 0, 100);
 }
 function combinedGrade(cov, rec, lenOK){
   const weighted=Math.round(0.55*cov + 0.45*rec);
@@ -212,11 +277,15 @@ function DayPanel({day, prevDocs, onSubmit}){
   </>);
 }
 
-function BundyReview({day, submission, prevDocs, onNext}){
+function BundyReview({day, submission, prevDocs, riskState, onNext}){
   const cov=coverageScore(submission.report, prevDocs);
   const rs=recScore(submission.recs, day);
   const g=combinedGrade(cov, rs, wordCount(submission.report)<=200);
   const prevISO=fmtISO(new Date(new Date(day+"T00:00:00Z").getTime()-86400000));
+  const pressure=docPressureScore(prevDocs);
+  const decisionDelta=decisionRiskDelta(submission.recs, day);
+  const totalRisk=clamp(riskState + pressure + decisionDelta, 0, 100);
+  const status=totalRisk>=100?"NUCLEAR WAR":(totalRisk>=75?"CRITICAL":(totalRisk>=45?"DANGEROUS":"MANAGEABLE"));
 
   return (
     <Card>
@@ -224,6 +293,11 @@ function BundyReview({day, submission, prevDocs, onNext}){
       <p className="mt-2"><strong>Coverage:</strong> {cov}/100 <span className="muted">— did you reflect the salient evidence from {prevISO}?</span></p>
       <p><strong>Recommendation fit:</strong> {rs}/100 <span className="muted">— how well your guidance matches the optimal posture for this period.</span></p>
       <p className="mt-2"><strong>Combined grade:</strong> {g.letter} ({g.score}/100)</p>
+      <div className="mt-3 rounded-xl border p-3 bg-slate-50">
+        <div><strong>Nuclear risk level:</strong> {totalRisk}/100 — <strong>{status}</strong></div>
+        <div className="text-sm muted mt-1">FRUS pressure from {prevISO}: +{pressure}. Your decision impact: {decisionDelta>=0?`+${decisionDelta}`:decisionDelta}.</div>
+        <div className="text-sm muted">Victory condition: keep risk below 100 through October. If risk hits 100, the world goes nuclear and you lose.</div>
+      </div>
       <div className="mt-3 text-slate-800">
         <p><strong>Bundy:</strong> Keep it crisp. Anchor judgments in evidence; keep the UN track and alliance equities in view. Manage risk while preserving maneuver space.</p>
       </div>
@@ -243,6 +317,8 @@ function App(){
   const [phase,setPhase]=React.useState("play"); // play | review | end
   const [sub,setSub]=React.useState(null);
   const [grades,setGrades]=React.useState([]);
+  const [risk,setRisk]=React.useState(20);
+  const [outcome,setOutcome]=React.useState("in_progress");
 
   React.useEffect(()=>{
     (async()=>{
@@ -269,10 +345,15 @@ function App(){
     const cov=coverageScore(sub?.report||"", prevDocs);
     const rs=recScore(sub?.recs||[], day);
     const g=combinedGrade(cov, rs, wordCount(sub?.report||"")<=200);
-    setGrades(arr=>arr.concat([{day, score:g.score, letter:g.letter}]));
+    const pressure=docPressureScore(prevDocs);
+    const decisionDelta=decisionRiskDelta(sub?.recs||[], day);
+    const riskAfter=clamp(risk + pressure + decisionDelta, 0, 100);
+    setGrades(arr=>arr.concat([{day, score:g.score, letter:g.letter, risk:riskAfter}]));
+    setRisk(riskAfter);
 
+    if(riskAfter>=100){ setOutcome("nuclear_war"); setPhase("end"); return; }
     if(i<days.length-1){ setI(i+1); setPhase("play"); setSub(null); }
-    else { setPhase("end"); }
+    else { setOutcome("averted"); setPhase("end"); }
   }
 
   return (
@@ -281,6 +362,13 @@ function App(){
         <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">ExComm: Daily NSC Brief — October 1962</h1>
         <div className="pill">Role: NSC Staff (reports 6:30–7:00am)</div>
       </header>
+
+      <Card className="bg-slate-900 text-white">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div><strong>Strategic Scoreboard:</strong> Nuclear risk {risk}/100</div>
+          <div className="text-sm opacity-80">Win = avoid nuclear war through 31 Oct. Loss = risk reaches 100.</div>
+        </div>
+      </Card>
 
       <PeoplePanel />
 
@@ -291,18 +379,18 @@ function App(){
       )}
 
       {ready && phase==="review" && sub && (
-        <BundyReview day={day} submission={sub} prevDocs={prevDocs} onNext={nextDay} />
+        <BundyReview day={day} submission={sub} prevDocs={prevDocs} riskState={risk} onNext={nextDay} />
       )}
 
       {ready && phase==="end" && (
         <Card>
-          <h2 className="text-xl font-bold">Epilogue — October complete</h2>
-          <p className="muted">Bundy’s summary of your performance across the month.</p>
+          <h2 className="text-xl font-bold">Epilogue — {outcome==="nuclear_war"?"Nuclear War":"October complete"}</h2>
+          <p className="muted">{outcome==="nuclear_war"?"Crisis management failed: escalation crossed the nuclear threshold.":"You navigated the crisis without crossing the nuclear threshold."}</p>
           <div className="mt-3 space-y-1">
             {grades.map((g,idx)=>(
               <div key={idx} className="flex items-center justify-between border-b py-1">
                 <div>{g.day}</div>
-                <div className="font-semibold">{g.letter} ({g.score}/100)</div>
+                <div className="font-semibold">{g.letter} ({g.score}/100) • Risk {g.risk}</div>
               </div>
             ))}
           </div>
