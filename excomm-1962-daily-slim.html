@@ -80,6 +80,13 @@ const ALL_RECS=[
   {id:"verify_un",label:"Pursue UN verification"},
   {id:"no_invasion_signal",label:"Signal no-invasion assurance (quietly)"},
 ];
+const KEY_PEOPLE=[
+  { name:"McGeorge Bundy", role:"National Security Advisor", img:"https://upload.wikimedia.org/wikipedia/commons/9/9d/McGeorge_Bundy%2C_bw_photo_portrait.jpg" },
+  { name:"John F. Kennedy", role:"President of the United States", img:"https://upload.wikimedia.org/wikipedia/commons/7/7d/John_F._Kennedy%2C_White_House_color_photo_portrait.jpg" },
+  { name:"Robert McNamara", role:"Secretary of Defense", img:"https://upload.wikimedia.org/wikipedia/commons/4/4c/Robert_McNamara%2C_1961.jpg" },
+  { name:"Dean Rusk", role:"Secretary of State", img:"https://upload.wikimedia.org/wikipedia/commons/c/c2/Dean_Rusk_official_photo.jpg" },
+  { name:"Adlai Stevenson", role:"U.S. Ambassador to the U.N.", img:"https://upload.wikimedia.org/wikipedia/commons/6/64/Adlai_Ewing_Stevenson_II.jpg" },
+];
 function expectedFor(dateISO){
   const t=new Date(dateISO+"T00:00:00Z").getTime();
   for(const row of REC_EXPECTATIONS){
@@ -128,6 +135,26 @@ const CheckRow=({id,label,checked,onChange})=>(
     <span>{label}</span>
   </label>
 );
+
+function PeoplePanel(){
+  return (
+    <Card>
+      <h2 className="text-xl font-bold">Key ExComm Figures</h2>
+      <p className="text-slate-700 mt-1">Faces you will see throughout the crisis simulation, including Mac Bundy.</p>
+      <div className="mt-3 grid sm:grid-cols-2 md:grid-cols-3 gap-3">
+        {KEY_PEOPLE.map(person=>(
+          <div key={person.name} className="border rounded-xl p-3 flex items-start gap-3">
+            <img src={person.img} alt={person.name} loading="lazy" className="w-16 h-16 rounded-lg object-cover border" />
+            <div>
+              <div className="font-semibold leading-tight">{person.name}</div>
+              <div className="text-sm muted mt-1">{person.role}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
 
 // === Panels ===
 function DayPanel({day, prevDocs, onSubmit}){
@@ -254,6 +281,8 @@ function App(){
         <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">ExComm: Daily NSC Brief — October 1962</h1>
         <div className="pill">Role: NSC Staff (reports 6:30–7:00am)</div>
       </header>
+
+      <PeoplePanel />
 
       {!ready && <Card><div>Loading FRUS documents…</div></Card>}
 
